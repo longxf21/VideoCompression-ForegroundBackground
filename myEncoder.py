@@ -95,6 +95,37 @@ def classify_macroblocks(mvectors, threshold, curr_frame, block_size):
 
     return classification, global_motion_vector
 
+def encode_DCT(padded_frame, classification, zigzag1, zigzag2):
+    height, width, channels = padded_frame.shape
+    quantized_frame = np.zeros_like(padded_frame, dtype=np.float32)
+
+    for i in range(0, height, 8):
+        for j in range(0, width, 8):
+            segment = classification[i//16, j//16]
+            for k in range(channels):
+                macroblock = padded_frame[i:i+8, j:j+8, k]
+                if segment == 1:
+                    quantized_macroblock = quantize_block(macroblock, zigzag1)
+                else:
+                    quantized_macroblock = quantize_block(macroblock, zigzag2)
+                quantized_frame[i:i+8, j:j+8, k] = quantized_macroblock
+
+    return quantized_frame
+
+def quantize_block(block, zigzag):
+    block = block.astype(np.float32)
+    block -= 128.0
+
+    dct_block = cv2.dct(block)
+
+    quantized_block = np.zeros_like(dct_block, dtype=np.float32)
+
+    for idx in zigzag:
+        i, j = idx
+        quantized_block[i, j] = dct_block[i, j]
+
+    return quantized_block
+
 def visualize_segmentation(frame, classification, block_size, global_motion_vector=None):
     vis_frame = frame.copy()
     height, width = classification.shape
@@ -122,6 +153,18 @@ def main():
     n1 = args.n1
     n2 = args.n2
 
+    zigzag = [(0, 0), (0, 1), (1, 0), (2, 0), (1, 1), (0, 2), (0, 3), (1, 2),
+                (2, 1), (3, 0), (4, 0), (3, 1), (2, 2), (1, 3), (0, 4), (0, 5),
+                (1, 4), (2, 3), (3, 2), (4, 1), (5, 0), (6, 0), (5, 1), (4, 2),
+                (3, 3), (2, 4), (1, 5), (0, 6), (0, 7), (1, 6), (2, 5), (3, 4),
+                (4, 3), (5, 2), (6, 1), (7, 0), (7, 1), (6, 2), (5, 3), (4, 4),
+                (3, 5), (2, 6), (1, 7), (2, 7), (3, 6), (4, 5), (5, 4), (6, 3),
+                (7, 2), (7, 3), (6, 4), (5, 5), (4, 6), (3, 7), (4, 7), (5, 6),
+                (6, 5), (7, 4), (7, 5), (6, 6), (5, 7), (6, 7), (7, 6), (7, 7)]
+    
+    zigzag1 = zigzag[:n1]
+    zigzag2 = zigzag[:n2]
+
     frame_width = 960
     frame_height = 540
     block_size = 16
@@ -139,6 +182,8 @@ def main():
     mvectors_list = []
     classifications = []
 
+    encoded_frames = []
+
     for idx in tqdm(range(1, num_frames), desc="Processing frames"):
         prev_frame = padded_frames[idx - 1]
         curr_frame = padded_frames[idx]
@@ -150,6 +195,11 @@ def main():
         # Classify macroblocks
         classification, global_motion_vector = classify_macroblocks(mvectors, threshold, curr_frame, block_size)
         classifications.append(classification)
+        
+        # dummy classification
+        # classification = np.zeros((34, 60), dtype=np.uint8)
+        
+        encoded_frames.append(encode_DCT(curr_frame, classification, zigzag1, zigzag2))
 
         # Visualize segmentation for testing
         vis_frame = visualize_segmentation(curr_frame, classification, block_size, global_motion_vector)
@@ -159,6 +209,12 @@ def main():
             break
 
     cv2.destroyAllWindows()
+    
+    #store the compressed video file with the same name as the input video file but with a different extension
+    output_filename = input_filename.replace('.rgb', '.cmp')
+    with open(output_filename, 'wb') as f:
+        np.save(f, np.array(encoded_frames))
+    print(f"Compressed video saved as {output_filename}")
 
     # Compression step
     # Save the motion vectors and classifications for further processing
