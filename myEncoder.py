@@ -25,43 +25,68 @@ def pad_frame(frame, block_size):
     padded_frame = cv2.copyMakeBorder(frame, 0, pad_height, 0, pad_width, cv2.BORDER_REPLICATE)
     return padded_frame
 
+
+def three_step_search(prev_gray, curr_block, i, j, block_size, search_range, height, width):
+    step_size = max(search_range // 2, 1)
+
+    def get_mad(px, py):
+        if px < 0 or py < 0 or px + block_size > width or py + block_size > height:
+            return float('inf')
+        ref_block = prev_gray[py:py + block_size, px:px + block_size]
+        if ref_block.shape != curr_block.shape:
+            return float('inf')
+        return np.mean(np.abs(curr_block.astype(np.int16) - ref_block.astype(np.int16)))
+
+    best_dx, best_dy = 0, 0
+    best_mad = get_mad(j, i)
+
+    while step_size > 0:
+        # Check center and eight surrounding points
+        candidate_points = [
+            (best_dx, best_dy),
+            (best_dx + step_size, best_dy),
+            (best_dx - step_size, best_dy),
+            (best_dx, best_dy + step_size),
+            (best_dx, best_dy - step_size),
+            (best_dx + step_size, best_dy + step_size),
+            (best_dx + step_size, best_dy - step_size),
+            (best_dx - step_size, best_dy + step_size),
+            (best_dx - step_size, best_dy - step_size)
+        ]
+
+        found_better = False
+        for dx, dy in candidate_points:
+            px = j + dx
+            py = i + dy
+            mad = get_mad(px, py)
+            if mad < best_mad:
+                best_mad = mad
+                best_dx = dx
+                best_dy = dy
+                found_better = True
+        # Reduce step size for next iteration
+        step_size = step_size // 2
+    return best_dx, best_dy
+
+
 def compute_motion_vectors(prev_frame, curr_frame, block_size, search_range):
-    # Convert grayscale
     prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_RGB2GRAY)
     curr_gray = cv2.cvtColor(curr_frame, cv2.COLOR_RGB2GRAY)
 
-    # Apply Gaussian blur to reduce noise
-    prev_gray = cv2.GaussianBlur(prev_gray, (5, 5), 0)
-    curr_gray = cv2.GaussianBlur(curr_gray, (5, 5), 0)
+    prev_gray = cv2.GaussianBlur(prev_gray, (3, 3), 0)
+    curr_gray = cv2.GaussianBlur(curr_gray, (3, 3), 0)
 
     height, width = curr_gray.shape
     mvectors = np.zeros((height // block_size, width // block_size, 2), dtype=np.int32)
 
     for i in range(0, height, block_size):
         for j in range(0, width, block_size):
-            curr_block = curr_gray[i:i+block_size, j:j+block_size]
-            min_mad = float('inf')
-            best_dx = 0
-            best_dy = 0
+            curr_block = curr_gray[i:i + block_size, j:j + block_size]
+            dx, dy = three_step_search(prev_gray, curr_block, i, j, block_size, search_range, height, width)
+            mvectors[i // block_size, j // block_size] = [dx, dy]
 
-            # Define search window in the previous frame
-            i_min = max(i - search_range, 0)
-            i_max = min(i + search_range, height - block_size)
-            j_min = max(j - search_range, 0)
-            j_max = min(j + search_range, width - block_size)
-
-            for m in range(i_min, i_max + 1):
-                for n in range(j_min, j_max + 1):
-                    ref_block = prev_gray[m:m+block_size, n:n+block_size]
-                    if ref_block.shape != curr_block.shape:
-                        continue  # Skip if blocks are not the same size (edge case)
-                    mad = np.mean(np.abs(curr_block.astype(np.int16) - ref_block.astype(np.int16)))
-                    if mad < min_mad:
-                        min_mad = mad
-                        best_dx = n - j
-                        best_dy = m - i
-            mvectors[i // block_size, j // block_size] = [best_dx, best_dy]
     return mvectors
+
 
 def classify_macroblocks(mvectors, threshold, curr_frame, block_size):
     # Reshape motion vectors
