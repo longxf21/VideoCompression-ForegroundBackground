@@ -51,6 +51,14 @@ class VideoPlayer(QMainWindow):
         self.video_label = QLabel(self)
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setText("Player")
+        self.video_label.setFixedSize(self.width, self.height)
+
+
+        self.encoded_video_label = QLabel(self)
+        self.encoded_video_label.setAlignment(Qt.AlignCenter)
+        self.encoded_video_label.setText("Encoding Progress Viewer")
+        self.encoded_video_label.setFixedSize(self.width, self.height)
+
 
         self.status = QLabel(self)
         self.status.setAlignment(Qt.AlignCenter)
@@ -92,7 +100,7 @@ class VideoPlayer(QMainWindow):
         self.load_decoded_video_button.clicked.connect(self.load_mp4_video)
 
         self.encode_button = QPushButton("Encode Video")
-        self.encode_button.clicked.connect(self.encode)
+        self.encode_button.clicked.connect(self.encode_refresh_in_window)
 
         self.decode_button = QPushButton("Decode Video")
         self.decode_button.clicked.connect(self.decode)
@@ -104,9 +112,17 @@ class VideoPlayer(QMainWindow):
         self.progress_label = QLabel(self)  # New label for progress and ETA
         self.progress_label.setText("")  # Initialize as empty
 
+
+
+        video_layout = QHBoxLayout()
+        video_layout.addWidget(self.video_label)
+        video_layout.addWidget(self.encoded_video_label)
+
+
+
         # Vertical layout for main widgets
         main_layout = QVBoxLayout()
-        main_layout.addWidget(self.video_label)
+        main_layout.addLayout(video_layout)
         main_layout.addWidget(self.status)
         main_layout.addWidget(self.parameters)
 
@@ -315,6 +331,106 @@ class VideoPlayer(QMainWindow):
 
         # Compression step
         # Save the motion vectors and classifications for further processing
+
+
+    def encode_refresh_in_window(self):
+        frame_width = self.width
+        frame_height = self.height
+        frames = self.videovalues
+
+        input_filename = self.args.input_file
+        n1 = self.args.n1
+        n2 = self.args.n2
+        block_size = self.args.block_size
+        search_range = self.args.search_range
+        threshold = self.args.threshold
+
+        zigzag = [(0, 0), (0, 1), (1, 0), (2, 0), (1, 1), (0, 2), (0, 3), (1, 2),
+                  (2, 1), (3, 0), (4, 0), (3, 1), (2, 2), (1, 3), (0, 4), (0, 5),
+                  (1, 4), (2, 3), (3, 2), (4, 1), (5, 0), (6, 0), (5, 1), (4, 2),
+                  (3, 3), (2, 4), (1, 5), (0, 6), (0, 7), (1, 6), (2, 5), (3, 4),
+                  (4, 3), (5, 2), (6, 1), (7, 0), (7, 1), (6, 2), (5, 3), (4, 4),
+                  (3, 5), (2, 6), (1, 7), (2, 7), (3, 6), (4, 5), (5, 4), (6, 3),
+                  (7, 2), (7, 3), (6, 4), (5, 5), (4, 6), (3, 7), (4, 7), (5, 6),
+                  (6, 5), (7, 4), (7, 5), (6, 6), (5, 7), (6, 7), (7, 6), (7, 7)]
+
+        zigzag1 = zigzag[:n1]
+        zigzag2 = zigzag[:n2]
+
+        print("Reading video frames...")
+        num_frames = len(frames)
+        print(f"Total frames read: {num_frames}")
+
+        # Pad frames to be multiples of block_size
+        padded_frames = [pad_frame(frame, block_size) for frame in frames]
+
+        mvectors_list = []
+        classifications = []
+        encoded_frames = []
+
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("")
+        self.status.setText("Start Encoding!")
+
+        self.current_frame_idx = 1
+        self.total_frames = num_frames - 1
+        self.padded_frames = padded_frames
+        self.encoded_frames = encoded_frames
+        self.mvectors_list = mvectors_list
+        self.classifications = classifications
+        self.start_time = time()
+
+        def process_frame():
+            if self.current_frame_idx >= num_frames:
+                self.progress_bar.setValue(100)
+                self.status.setText("Encoding complete!")
+                self.progress_bar.setVisible(False)
+                return
+
+            idx = self.current_frame_idx
+            prev_frame = self.padded_frames[idx - 1]
+            curr_frame = self.padded_frames[idx]
+
+            # Compute motion vectors
+            mvectors = compute_motion_vectors(prev_frame, curr_frame, block_size, search_range)
+            self.mvectors_list.append(mvectors)
+
+            # Classify macroblocks
+            classification, global_motion_vector = classify_macroblocks(mvectors, threshold, curr_frame, block_size)
+            self.classifications.append(classification)
+
+            encoded_frame = encode_DCT(curr_frame, classification, zigzag1, zigzag2)
+            self.encoded_frames.append(encoded_frame)
+
+            # Visualize segmentation
+            vis_frame = visualize_segmentation(curr_frame, classification, block_size, global_motion_vector)
+
+            resized_vis_frame = cv2.resize(vis_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+
+            vis_frame_rgb = cv2.cvtColor(resized_vis_frame, cv2.COLOR_BGR2RGB)  # Convert to RGB
+            height, width, channel = vis_frame_rgb.shape
+            bytes_per_line = channel * width
+            qimg = QImage(vis_frame_rgb.data, width, height, bytes_per_line, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(qimg)
+            self.encoded_video_label.setPixmap(pixmap)
+
+            elapsed_time = time() - self.start_time
+            progress = int((idx / self.total_frames) * 100)
+            eta = elapsed_time / idx * (self.total_frames - idx)
+            self.progress_bar.setValue(progress)
+            self.progress_label.setText(f"Frame {idx} of {self.total_frames} processed. ETA: {int(eta)} seconds")
+
+            self.current_frame_idx += 1
+
+        # Use QTimer to call process_frame incrementally
+        self.timer2 = QTimer(self)
+        self.timer2.timeout.connect(process_frame)
+        self.timer2.start(10)  # Adjust interval as needed (in milliseconds)
+        with open(self.output_cmp_file_name, 'wb') as f:
+            np.save(f, np.array(encoded_frames))
+        print(f"Compressed video saved as {self.output_cmp_file_name}")
+
 
     def show_error_popup(self, message):
         # Create a message box to display the error
