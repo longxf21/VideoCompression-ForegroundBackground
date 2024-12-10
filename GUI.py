@@ -156,14 +156,16 @@ class VideoPlayer(QMainWindow):
 
 
     def load_video(self):
-        self.videovalues = read_rgb_video(self.rgb_file, self.width, self.height)
-        self.current_frame = 0
-        self.status.setText(f"Playing Source Video")
-        self.show_frame(0)
-        self.pause()
         self.play_button.setText("Play")
+        self.status.setText(f"Playing Source Video")
+
+        self.pause()
         self.timer.stop()
         pygame.mixer.music.pause()
+
+        self.videovalues = read_rgb_video(self.rgb_file, self.width, self.height)
+        self.current_frame = 0
+        self.show_frame(0)
 
     def load_mp4_video(self):
         self.status.setText(f"Playing Decoded Video")
@@ -183,13 +185,18 @@ class VideoPlayer(QMainWindow):
             video_frames.append(frame_rgb)
 
         cap.release()
+
+        self.play_button.setText("Play")
+        self.status.setText(f"Playing Decoded Video")
+
+        self.pause()
+        self.timer.stop()
+        pygame.mixer.music.pause()
+
         self.videovalues = video_frames
         self.current_frame = 0
         self.show_frame(0)
-        self.pause()
-        self.play_button.setText("Play")
-        self.timer.stop()
-        pygame.mixer.music.pause()
+
 
     def show_frame(self, frame_id):
         if frame_id < 0 or frame_id >= len(self.videovalues):
