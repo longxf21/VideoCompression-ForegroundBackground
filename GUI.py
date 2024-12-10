@@ -45,7 +45,9 @@ class VideoPlayer(QMainWindow):
         self.output_mp4_file_name = os.path.abspath(os.path.join(args.output_path, output_mp4_file_basename))
 
         pygame.mixer.init()
+
         self.init_ui()
+        self.load_video()
 
     def init_ui(self):
         self.video_label = QLabel(self)
@@ -151,7 +153,7 @@ class VideoPlayer(QMainWindow):
         container.setLayout(main_layout)
         self.setCentralWidget(container)
 
-        self.load_video()
+
 
     def load_video(self):
         self.videovalues = read_rgb_video(self.rgb_file, self.width, self.height)
@@ -284,6 +286,7 @@ class VideoPlayer(QMainWindow):
         self.progress_label.setText("")
         self.status.setText("Start Encoding!")
         start_time = time()
+
         for idx in tqdm(range(1, num_frames), desc="Processing frames"):
             elapsed_time = time() - start_time
             progress = int((idx / total_frames) * 100)
@@ -362,30 +365,36 @@ class VideoPlayer(QMainWindow):
         print(f"Total frames read: {num_frames}")
 
         # Pad frames to be multiples of block_size
-        padded_frames = [pad_frame(frame, block_size) for frame in frames]
+        # padded_frames = [pad_frame(frame, block_size) for frame in frames]
 
-        mvectors_list = []
-        classifications = []
-        encoded_frames = []
+        # mvectors_list = []
+        # classifications = []
+        # encoded_frames = []
+        self.padded_frames = [pad_frame(frame, block_size) for frame in frames]
+
+        self.mvectors_list = []
+        self.classifications = []
+
+        self.encoded_frames = []
+        self.current_frame_idx = 1
+        self.total_frames = num_frames - 1
 
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.progress_label.setText("")
         self.status.setText("Start Encoding!")
 
-        self.current_frame_idx = 1
-        self.total_frames = num_frames - 1
-        self.padded_frames = padded_frames
-        self.encoded_frames = encoded_frames
-        self.mvectors_list = mvectors_list
-        self.classifications = classifications
         self.start_time = time()
 
         def process_frame():
-            if self.current_frame_idx >= num_frames:
+            if self.current_frame_idx >= len(frames):
                 self.progress_bar.setValue(100)
                 self.status.setText("Encoding complete!")
                 self.progress_bar.setVisible(False)
+                self.timer2.stop()
+                with open(self.output_cmp_file_name, 'wb') as f:
+                    np.save(f, np.array(self.encoded_frames))
+                print(f"Compressed video saved as {self.output_cmp_file_name}")
                 return
 
             idx = self.current_frame_idx
@@ -407,8 +416,8 @@ class VideoPlayer(QMainWindow):
             vis_frame = visualize_segmentation(curr_frame, classification, block_size, global_motion_vector)
 
             resized_vis_frame = cv2.resize(vis_frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
-
-            vis_frame_rgb = cv2.cvtColor(resized_vis_frame, cv2.COLOR_BGR2RGB)  # Convert to RGB
+            # vis_frame_rgb = cv2.cvtColor(resized_vis_frame, cv2.COLOR_BGR2RGB)  # Convert to RGB
+            vis_frame_rgb = resized_vis_frame
             height, width, channel = vis_frame_rgb.shape
             bytes_per_line = channel * width
             qimg = QImage(vis_frame_rgb.data, width, height, bytes_per_line, QImage.Format_RGB888)
@@ -423,13 +432,10 @@ class VideoPlayer(QMainWindow):
 
             self.current_frame_idx += 1
 
-        # Use QTimer to call process_frame incrementally
         self.timer2 = QTimer(self)
         self.timer2.timeout.connect(process_frame)
-        self.timer2.start(10)  # Adjust interval as needed (in milliseconds)
-        with open(self.output_cmp_file_name, 'wb') as f:
-            np.save(f, np.array(encoded_frames))
-        print(f"Compressed video saved as {self.output_cmp_file_name}")
+        self.timer2.start(10)
+
 
 
     def show_error_popup(self, message):
