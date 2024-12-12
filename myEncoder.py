@@ -168,3 +168,84 @@ def visualize_segmentation(frame, classification, block_size, global_motion_vect
 
     return vis_frame
 
+
+def main():
+    parser = argparse.ArgumentParser(description='Video Segmentation Encoder')
+    parser.add_argument('input_file', type=str, help='Input .rgb video file')
+    parser.add_argument('n1', type=int, help='Quantization step for foreground macroblocks')
+    parser.add_argument('n2', type=int, help='Quantization step for background macroblocks')
+    args = parser.parse_args()
+
+    input_filename = args.input_file
+    n1 = args.n1
+    n2 = args.n2
+
+    zigzag = [(0, 0), (0, 1), (1, 0), (2, 0), (1, 1), (0, 2), (0, 3), (1, 2),
+              (2, 1), (3, 0), (4, 0), (3, 1), (2, 2), (1, 3), (0, 4), (0, 5),
+              (1, 4), (2, 3), (3, 2), (4, 1), (5, 0), (6, 0), (5, 1), (4, 2),
+              (3, 3), (2, 4), (1, 5), (0, 6), (0, 7), (1, 6), (2, 5), (3, 4),
+              (4, 3), (5, 2), (6, 1), (7, 0), (7, 1), (6, 2), (5, 3), (4, 4),
+              (3, 5), (2, 6), (1, 7), (2, 7), (3, 6), (4, 5), (5, 4), (6, 3),
+              (7, 2), (7, 3), (6, 4), (5, 5), (4, 6), (3, 7), (4, 7), (5, 6),
+              (6, 5), (7, 4), (7, 5), (6, 6), (5, 7), (6, 7), (7, 6), (7, 7)]
+
+    zigzag1 = zigzag[:n1]
+    zigzag2 = zigzag[:n2]
+
+    frame_width = 960
+    frame_height = 540
+    block_size = 16
+    search_range = 7
+    threshold = 2  # Motion vector magnitude threshold
+
+    print("Reading video frames...")
+    frames = read_rgb_video(input_filename, frame_width, frame_height)
+    num_frames = len(frames)
+    print(f"Total frames read: {num_frames}")
+
+    # Pad frames to be multiples of block_size
+    padded_frames = [pad_frame(frame, block_size) for frame in frames]
+
+    mvectors_list = []
+    classifications = []
+
+    encoded_frames = []
+
+    for idx in tqdm(range(1, num_frames), desc="Processing frames"):
+        prev_frame = padded_frames[idx - 1]
+        curr_frame = padded_frames[idx]
+
+        # Compute motion vectors
+        mvectors = compute_motion_vectors(prev_frame, curr_frame, block_size, search_range)
+        mvectors_list.append(mvectors)
+
+        # Classify macroblocks
+        classification, global_motion_vector = classify_macroblocks(mvectors, threshold, curr_frame, block_size)
+        classifications.append(classification)
+
+        # dummy classification
+        # classification = np.zeros((34, 60), dtype=np.uint8)
+
+        encoded_frames.append(encode_DCT(curr_frame, classification, zigzag1, zigzag2))
+
+        # Visualize segmentation for testing
+        vis_frame = visualize_segmentation(curr_frame, classification, block_size, global_motion_vector)
+        display_frame = cv2.resize(vis_frame, (960, 540))
+        cv2.imshow('Segmentation', display_frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cv2.destroyAllWindows()
+
+    # store the compressed video file with the same name as the input video file but with a different extension
+    output_filename = input_filename.replace('.rgb', '.cmp')
+    with open(output_filename, 'wb') as f:
+        np.save(f, np.array(encoded_frames))
+    print(f"Compressed video saved as {output_filename}")
+
+    # Compression step
+    # Save the motion vectors and classifications for further processing
+
+
+if __name__ == '__main__':
+    main()

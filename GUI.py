@@ -24,6 +24,21 @@ from tqdm import tqdm
 class VideoPlayer(QMainWindow):
     def __init__(self, args):
         super().__init__()
+        rgb_file = args.input_file
+        if args.audio_file != "":
+            wav_file = args.audio_file
+        else:
+            if rgb_file and rgb_file.endswith('.rgb'):
+                video_dir = os.path.dirname(os.path.dirname(rgb_file))
+                video_basename = os.path.basename(rgb_file)
+                wav_basename = os.path.splitext(video_basename)[0] + '.wav'
+                wav_dir = os.path.join(video_dir, 'wavs')
+                wav_file = os.path.join(wav_dir, wav_basename)
+            else:
+                raise ValueError("No audio file provided and video file is invalid or missing.")
+        print(f"Using audio file: {wav_file}")
+        setattr(args, 'wav_file', wav_file)
+
         self.setWindowTitle("Video Player")
         self.framerate = args.framerate - 0.3
         print("Framerate: ", self.framerate)
@@ -563,20 +578,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    rgb_file = args.input_file
-    if args.audio_file != "":
-        wav_file = args.audio_file
-    else:
-        if rgb_file and rgb_file.endswith('.rgb'):
-            video_dir = os.path.dirname(os.path.dirname(rgb_file))
-            video_basename = os.path.basename(rgb_file)
-            wav_basename = os.path.splitext(video_basename)[0] + '.wav'
-            wav_dir = os.path.join(video_dir, 'wavs')
-            wav_file = os.path.join(wav_dir, wav_basename)
-        else:
-            raise ValueError("No audio file provided and video file is invalid or missing.")
-    print(f"Using audio file: {wav_file}")
-    setattr(args, 'wav_file', wav_file)
     os.makedirs(args.output_path, exist_ok=True)
 
     app = QApplication(sys.argv)
