@@ -25,8 +25,10 @@ class VideoPlayer(QMainWindow):
     def __init__(self, args):
         super().__init__()
         self.setWindowTitle("Video Player")
-        self.framerate = args.framerate
-        self.timer_interval = 1000 // self.framerate
+        self.framerate = args.framerate - 0.3
+        print("Framerate: ", self.framerate)
+        self.timer_interval = int (1000 / self.framerate)
+        print("Timer Interval: ", self.timer_interval)
         self.timer = QTimer()
         self.timer.timeout.connect(self.play_next_frame)
         self.videovalues = None
@@ -40,6 +42,7 @@ class VideoPlayer(QMainWindow):
         video_basename = os.path.basename(rgb_file)
         output_cmp_file_basename = os.path.splitext(video_basename)[0] + '.cmp'
         self.output_cmp_file_name = os.path.abspath(os.path.join(args.output_path, output_cmp_file_basename))
+        print("Output CMP File Name: ", self.output_cmp_file_name)
 
         output_mp4_file_basename = os.path.splitext(video_basename)[0] + '.mp4'
         self.output_mp4_file_name = os.path.abspath(os.path.join(args.output_path, output_mp4_file_basename))
@@ -210,31 +213,37 @@ class VideoPlayer(QMainWindow):
     def toggle_playback(self):
         if self.timer.isActive():
             self.pause()
-            self.play_button.setText("Play")
         else:
             self.play()
-            self.play_button.setText("Pause")
+
 
     def play(self):
-        self.timer.start(self.timer_interval)
+        self.play_button.setText("Pause")
         self.play_audio()
+        self.timer.start(self.timer_interval)
+
 
     def pause(self):
-        self.timer.stop()
+        self.play_button.setText("Play")
         pygame.mixer.music.pause()
+        self.timer.stop()
+
 
     def play_audio(self):
         if not self.wav_file:
             return
 
-        playback_position = int((self.current_frame / self.framerate) * 1000)
+        playback_position = int((self.current_frame / 30) * 1000)
 
-        pygame.mixer.music.stop()
-        pygame.mixer.music.load(self.wav_file)
-        pygame.mixer.music.play(start=playback_position / 1000)
+        try:
+            pygame.mixer.music.stop()
+            pygame.mixer.music.load(self.wav_file)
+            pygame.mixer.music.play(start=playback_position / 1000)
+        except Exception as e:
+            print(f"Failed to load audio: {e}, at position: {playback_position}, file: {self.wav_file}")
 
     def play_next_frame(self):
-        if self.current_frame >= len(self.videovalues):
+        if self.current_frame >= len(self.videovalues)-1:
             self.pause()
             return
         self.current_frame += 1
@@ -394,14 +403,19 @@ class VideoPlayer(QMainWindow):
         self.start_time = time()
 
         def process_frame():
-            if self.current_frame_idx >= len(frames):
+            if self.current_frame_idx >= len(frames)-1:
+            # if self.current_frame_idx >= 20:
                 self.progress_bar.setValue(100)
                 self.status.setText("Encoding complete!")
+                self.progress_label.setText("Encoding complete!")
                 self.progress_bar.setVisible(False)
                 self.timer2.stop()
-                with open(self.output_cmp_file_name, 'wb') as f:
-                    np.save(f, np.array(self.encoded_frames))
-                print(f"Compressed video saved as {self.output_cmp_file_name}")
+                try:
+                    with open(self.output_cmp_file_name, 'wb') as f:
+                        np.save(f, np.array(self.encoded_frames))
+                    print(f"Compressed video saved as {self.output_cmp_file_name}")
+                except Exception as e:
+                    print(f"Failed to save compressed video: {e} in directory {self.output_cmp_file_name}")
                 return
 
             idx = self.current_frame_idx
@@ -414,6 +428,9 @@ class VideoPlayer(QMainWindow):
 
             # Classify macroblocks
             classification, global_motion_vector = classify_macroblocks(mvectors, threshold, curr_frame, block_size)
+            # print(np.sum(classification))
+            if (np.sum(classification) < 10) and len(self.classifications) > 0:
+                classification = self.classifications[-1]
             self.classifications.append(classification)
 
             encoded_frame = encode_DCT(curr_frame, classification, zigzag1, zigzag2)
@@ -435,7 +452,10 @@ class VideoPlayer(QMainWindow):
             progress = int((idx / self.total_frames) * 100)
             eta = elapsed_time / idx * (self.total_frames - idx)
             self.progress_bar.setValue(progress)
-            self.progress_label.setText(f"Frame {idx} of {self.total_frames} processed. ETA: {int(eta)} seconds")
+
+            # self.progress_label.setText(f"Frame {idx} of {self.total_frames} processed. ETA: {int(eta)} seconds")
+            percentage = (idx + 1) / self.total_frames * 100
+            self.progress_label.setText(f"{percentage:.1f} % processed. ETA: {int(eta)} seconds")
 
             self.current_frame_idx += 1
 
@@ -481,22 +501,23 @@ class VideoPlayer(QMainWindow):
 
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # 'mp4v' codec for mp4 files
         # video = input_video.split('.')[0] + '.mp4'
-        out = cv2.VideoWriter(self.output_mp4_file_name, fourcc, self.framerate, (width, height))
+        out = cv2.VideoWriter(self.output_mp4_file_name, fourcc, int(self.framerate), (width, height))
 
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.progress_label.setText("")
         self.status.setText("Start Decoding!")
         start_time = time()
-        for idx in tqdm(range(1, len(encoded_frames)), desc='Decoding frames'):
+        for idx in tqdm(range(0, len(encoded_frames)), desc='Decoding frames'):
             elapsed_time = time() - start_time
-            progress = int((idx / len(encoded_frames)) * 100)
-            eta = elapsed_time / idx * (len(encoded_frames) - idx)
+            progress = int(((1+idx) / len(encoded_frames)) * 100)
+            eta = elapsed_time / (idx+1) * (len(encoded_frames) - (idx+1))
 
             # Update progress bar and new progress label
             self.progress_bar.setValue(progress)
+            percentage = (idx + 1) / len(encoded_frames) * 100
             self.progress_label.setText(
-                f"Frame {idx} of {len(encoded_frames)} processed. ETA: {int(eta)} seconds"
+                f"{percentage:.1f} % processed. ETA: {int(eta)} seconds"
             )
 
             frame = encoded_frames[idx]
@@ -511,7 +532,7 @@ class VideoPlayer(QMainWindow):
             out.write(unpadded_frame)
 
             # Display the frame in a window
-            cv2.imshow('Decoded Video', unpadded_frame)
+            cv2.imshow('Video is being decoded!', unpadded_frame)
 
             # Break the loop if 'q' is pressed
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -523,6 +544,7 @@ class VideoPlayer(QMainWindow):
         self.progress_bar.setValue(100)
         self.status.setText("Decoding complete!")
         self.progress_bar.setVisible(False)
+        self.progress_label.setText("Decoding complete!")
 
 
 if __name__ == "__main__":
@@ -534,7 +556,7 @@ if __name__ == "__main__":
     parser.add_argument('--frame_height', type=int, default=540, help='Height of video frames')
     parser.add_argument('--block_size', type=int, default=16, help='Size of macroblocks')
     parser.add_argument('--search_range', type=int, default=7, help='Search range for motion vectors')
-    parser.add_argument('--threshold', type=int, default=2, help='Motion vector magnitude threshold')
+    parser.add_argument('--threshold', type=int, default=1, help='Motion vector magnitude threshold')
     parser.add_argument('--framerate', type=int, default=30, help='Framerate of the video')
     parser.add_argument('--audio_file', type=str, default="", help='Input .wav audio file')
     parser.add_argument('--output_path', type=str, default="output", help='Output .cmp video file dir')

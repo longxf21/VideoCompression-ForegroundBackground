@@ -166,3 +166,5 @@ cython_debug/
 /rgbs
 /wavs
 /mp4
+/previous_dataset
+test.ipynb
